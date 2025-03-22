@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s  # Set the scrape interval to every 5 seconds
+  evaluation_interval: 5s  # Evaluate rules every 5 seconds
+
+scrape_configs:
+  - job_name: 'ics_normal'
+    static_configs:
+      - targets: ['localhost:8000']
+        labels:
+          instance: 'ics_normal'
+          environment: 'simulation'
+
+  - job_name: 'ics_attack'
+    static_configs:
+      - targets: ['localhost:8001']
+        labels:
+          instance: 'ics_attack'
+          environment: 'simulation'

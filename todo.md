@@ -1,3 +1,4 @@
 - Make web UI to start and stop attack
 - Make second web UI to show if an attack is running
-- Create attack averages from live data and use ML to process it
+- Create attack averages from live data and use ML to process it 
+    - Use threading

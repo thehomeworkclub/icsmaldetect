@@ -169,7 +169,7 @@ class ICSSimulationGUI:
             self.under_attack = True
             self.attack_btn.config(state='disabled')
             self.status_var.set("Facility Status: UNDER ATTACK")
-            self.log_output("CYBER ATTACK DETECTED!", "WARNING")
+            self.log_output("CYBER ATTACK STARTED!", "WARNING")
             
             # Start attack output monitoring thread
             threading.Thread(target=self.monitor_attack_output, daemon=True).start()

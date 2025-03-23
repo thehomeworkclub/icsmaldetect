@@ -8,42 +8,65 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 import socket
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ICSSimulationGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("ICS Facility Control")
-        self.root.geometry("400x300")
+        self.root.geometry("600x400")
         
         # Style
         style = ttk.Style()
-        style.configure('Warning.TButton', background='red', foreground='red')
+        style.configure('Attack.TButton', background='red')
+        style.configure('Emergency.TButton', background='red', foreground='white')
         
         # Create main frame
         main_frame = ttk.Frame(root, padding="20")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Status label
-        self.status_label = ttk.Label(main_frame, text="Facility Status: Offline", font=('Helvetica', 12))
+        self.status_var = tk.StringVar(value="Facility Status: Offline")
+        self.status_label = ttk.Label(main_frame, textvariable=self.status_var, 
+                                    font=('Helvetica', 12, 'bold'))
         self.status_label.grid(row=0, column=0, columnspan=2, pady=20)
         
         # Start button
         self.start_btn = ttk.Button(main_frame, text="Start Uranium Enrichment Facility", 
-                                  command=self.start_facility)
+                                  command=self.start_facility,
+                                  style='TButton')
         self.start_btn.grid(row=1, column=0, columnspan=2, pady=10, padx=20, sticky='ew')
         
         # Attack button (initially disabled)
         self.attack_btn = ttk.Button(main_frame, text="Simulate Cyber Attack", 
                                    command=self.start_attack,
-                                   style='Warning.TButton',
+                                   style='Attack.TButton',
                                    state='disabled')
         self.attack_btn.grid(row=2, column=0, columnspan=2, pady=10, padx=20, sticky='ew')
         
         # Stop button (initially disabled)
-        self.stop_btn = ttk.Button(main_frame, text="Emergency Stop", 
+        self.stop_btn = ttk.Button(main_frame, text="EMERGENCY STOP", 
                                  command=self.stop_facility,
+                                 style='Emergency.TButton',
                                  state='disabled')
         self.stop_btn.grid(row=3, column=0, columnspan=2, pady=10, padx=20, sticky='ew')
+        
+        # Output display
+        self.output_frame = ttk.LabelFrame(main_frame, text="System Alerts", padding="10")
+        self.output_frame.grid(row=4, column=0, columnspan=2, pady=10, sticky='nsew')
+        
+        self.output_text = tk.Text(self.output_frame, height=10, width=60)
+        self.output_text.pack(expand=True, fill='both')
+        
+        # Scrollbar for output
+        scrollbar = ttk.Scrollbar(self.output_frame, orient='vertical', 
+                                command=self.output_text.yview)
+        scrollbar.pack(side='right', fill='y')
+        self.output_text.configure(yscrollcommand=scrollbar.set)
         
         # Process tracking
         self.normal_sim = None
@@ -53,20 +76,33 @@ class ICSSimulationGUI:
         
         # Configure grid weights
         main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(4, weight=1)
         root.columnconfigure(0, weight=1)
-        
-        # Set up output display
-        self.output_text = tk.Text(main_frame, height=8, width=40)
-        self.output_text.grid(row=4, column=0, columnspan=2, pady=10, padx=20)
-        self.output_text.config(state='disabled')
+        root.rowconfigure(0, weight=1)
         
         # Protocol for window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    def log_output(self, message):
-        """Add message to output text widget"""
+    def log_output(self, message, level="INFO"):
+        """Add message to output text widget with timestamp"""
         self.output_text.config(state='normal')
-        self.output_text.insert('end', f"{message}\n")
+        timestamp = time.strftime("%H:%M:%S")
+        
+        if level == "WARNING":
+            tag = "warning"
+            prefix = "WARNING"
+        elif level == "ERROR":
+            tag = "error"
+            prefix = "ERROR"
+        else:
+            tag = "info"
+            prefix = "INFO"
+        
+        self.output_text.tag_configure("warning", foreground="orange")
+        self.output_text.tag_configure("error", foreground="red")
+        self.output_text.tag_configure("info", foreground="green")
+        
+        self.output_text.insert('end', f"[{timestamp}] {prefix}: {message}\n", tag)
         self.output_text.see('end')
         self.output_text.config(state='disabled')
 
@@ -94,7 +130,7 @@ class ICSSimulationGUI:
             )
             
             self.is_running = True
-            self.status_label.config(text="Facility Status: Online")
+            self.status_var.set("Facility Status: ONLINE")
             self.start_btn.config(state='disabled')
             self.attack_btn.config(state='normal')
             self.stop_btn.config(state='normal')
@@ -102,10 +138,11 @@ class ICSSimulationGUI:
             # Start output monitoring thread
             threading.Thread(target=self.monitor_output, daemon=True).start()
             
-            self.log_output("Facility started - Monitoring metrics...")
+            self.log_output("Facility started - Systems operational", "INFO")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start facility: {str(e)}")
+            logger.error(f"Startup error: {str(e)}")
 
     def start_attack(self):
         """Start the attack simulation"""
@@ -131,13 +168,15 @@ class ICSSimulationGUI:
             
             self.under_attack = True
             self.attack_btn.config(state='disabled')
-            self.log_output("WARNING: Cyber attack detected!")
+            self.status_var.set("Facility Status: UNDER ATTACK")
+            self.log_output("CYBER ATTACK DETECTED!", "WARNING")
             
             # Start attack output monitoring thread
             threading.Thread(target=self.monitor_attack_output, daemon=True).start()
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start attack simulation: {str(e)}")
+            logger.error(f"Attack simulation error: {str(e)}")
 
     def stop_facility(self):
         """Stop all simulations"""
@@ -154,12 +193,12 @@ class ICSSimulationGUI:
                 process.wait()
         
         # Reset GUI
-        self.status_label.config(text="Facility Status: Offline")
+        self.status_var.set("Facility Status: OFFLINE")
         self.start_btn.config(state='normal')
         self.attack_btn.config(state='disabled')
         self.stop_btn.config(state='disabled')
         
-        self.log_output("Facility stopped.")
+        self.log_output("Emergency stop initiated - All systems offline", "WARNING")
 
     def monitor_output(self):
         """Monitor and display normal simulation output"""
@@ -167,15 +206,23 @@ class ICSSimulationGUI:
             output = self.normal_sim.stdout.readline()
             if output:
                 if "ANOMALY DETECTED" in output:
-                    self.log_output(output.strip())
+                    self.log_output(output.strip(), "WARNING")
+                elif "ERROR" in output.upper():
+                    self.log_output(output.strip(), "ERROR")
+                elif "WARNING" in output.upper():
+                    self.log_output(output.strip(), "WARNING")
 
     def monitor_attack_output(self):
         """Monitor and display attack simulation output"""
         while self.under_attack and self.attack_sim and self.attack_sim.poll() is None:
             output = self.attack_sim.stdout.readline()
             if output:
-                if "Attack detected" in output:
-                    self.log_output(output.strip())
+                if "CRITICAL" in output or "ATTACK" in output:
+                    self.log_output(output.strip(), "WARNING")
+                elif "ERROR" in output.upper():
+                    self.log_output(output.strip(), "ERROR")
+                elif "ANOMALY" in output:
+                    self.log_output(output.strip(), "WARNING")
 
     def on_closing(self):
         """Handle window closing"""

@@ -9,6 +9,11 @@ scrape_configs:
         labels:
           instance: 'ics_normal'
           environment: 'simulation'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        target_label: __name__
+        regex: '(.*)'
+        replacement: 'normal_${1}'
 
   - job_name: 'ics_attack'
     static_configs:
@@ -16,3 +21,8 @@ scrape_configs:
         labels:
           instance: 'ics_attack'
           environment: 'simulation'
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        target_label: __name__
+        regex: '(.*)'
+        replacement: 'attack_${1}'

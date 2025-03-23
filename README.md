@@ -1,4 +1,4 @@
-## ICS Malware Detection based on ANIMA for anomaly detection
+## ICS Malware Detection based on ARIMA for anomaly detection
 
 **ICS Malware Detector** is a tool designed during the Crack The Code 2025 Concordia Hackathon to enhance the security of Industrial Control Systems (ICS) through advanced anomaly detection. By leveraging ARIMA (AutoRegressive Integrated Moving Average) models and machine learning, we provide real-time monitoring and detection of potential cyber attacks targeting critical infrastructure components.
 

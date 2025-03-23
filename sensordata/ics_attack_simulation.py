@@ -3,14 +3,14 @@ import time
 import random
 import math
 import logging
+import threading
+import signal
+import sys
 from prometheus_client import start_http_server, Gauge, Counter
 from arima_detector import ArimaDetector
-import warnings
-from ics_metrics import ICSMetrics
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
-warnings.filterwarnings("ignore")
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ICSAttackSimulation:
@@ -46,55 +46,66 @@ class ICSAttackSimulation:
             'current': 10.0           # A
         }
         
-        # Copy base params to current params
-        self.current_params = self.base_params.copy()
-        
-        # Attack ranges (based on training data anomalies)
+        # Attack ranges
         self.attack_params = {
-            'rotation_speed': {'max': 20000, 'min': 1000},     # RPM
-            'vibration': {'max': 4.0, 'min': 0.1},            # mm/s
-            'temperature': {'max': 85.0, 'min': 65.0},        # °C
-            'pressure': {'max': 560.0, 'min': 540.0},         # Pa
-            'flow_rate': {'max': 80.0, 'min': 60.0},          # g/min
-            'voltage': {'max': 390.0, 'min': 370.0},          # V
-            'current': {'max': 20.0, 'min': 5.0}              # A
+            'rotation_speed': {'max': 20000, 'min': 1000},
+            'vibration': {'max': 4.0, 'min': 0.1},
+            'temperature': {'max': 85.0, 'min': 65.0},
+            'pressure': {'max': 560.0, 'min': 540.0},
+            'flow_rate': {'max': 80.0, 'min': 60.0},
+            'voltage': {'max': 390.0, 'min': 370.0},
+            'current': {'max': 20.0, 'min': 5.0}
         }
         
-        # Attack state
+        # Control flags
+        self.is_running = True
+        self.is_attacking = False
         self.attack_type = None
         self.attack_progress = 0
-        self.attack_duration = 60
-        self.is_attacking = False
-        self.attack_cooldown = 0
-        self.cooldown_period = 120
+        self.metrics_thread = None
         
-        logger.info("Attack simulation initialized with base values: %s", str(self.base_params))
+        # Signal handlers
+        signal.signal(signal.SIGINT, self.handle_signal)
+        signal.signal(signal.SIGTERM, self.handle_signal)
+        if sys.platform == 'win32':
+            signal.signal(signal.SIGBREAK, self.handle_signal)
+        
+        logger.info("Attack simulation initialized with base values")
+
+    def handle_signal(self, signum, frame):
+        """Handle shutdown signals"""
+        logger.info("Shutdown signal received, stopping attack simulation...")
+        self.stop()
+
+    def stop(self):
+        """Stop simulation"""
+        self.is_running = False
+        if self.metrics_thread and self.metrics_thread.is_alive():
+            self.metrics_thread.join(timeout=5)
+        logger.info("Attack simulation stopped")
 
     def add_minimal_noise(self, value):
-        """Add minimal noise (matching training data)"""
-        noise = random.uniform(-0.1, 0.1)  # 0.1% variation
+        """Add minimal noise"""
+        noise = random.uniform(-0.1, 0.1)
         return value + (value * noise)
 
     def generate_attack_value(self, metric_name):
-        """Generate attack values based on training data patterns"""
+        """Generate attack values"""
         base_value = self.base_params[metric_name]
         attack_range = self.attack_params[metric_name]
-        progress_factor = (self.attack_progress % self.attack_duration) / self.attack_duration
+        progress_factor = (self.attack_progress % 60) / 60.0
         
         if self.attack_type == 'gradual':
-            # Gradual deviation
             max_change = attack_range['max'] - base_value
             change = max_change * (progress_factor ** 2)
             new_value = base_value + change
             
         elif self.attack_type == 'oscillating':
-            # Oscillating pattern
             amplitude = (attack_range['max'] - attack_range['min']) * 0.5
             frequency = 2.0
             new_value = base_value + amplitude * math.sin(progress_factor * 2 * math.pi * frequency)
             
         else:  # sudden
-            # Random jumps
             if random.random() < 0.4:
                 new_value = random.choice([
                     attack_range['min'],
@@ -111,74 +122,105 @@ class ICSAttackSimulation:
     def update_metrics(self):
         """Update metrics with attack patterns"""
         try:
-            self.attack_progress += 1
-            current_values = {}
-            
             # Handle attack state changes
-            if not self.is_attacking:
-                if self.attack_cooldown > 0:
-                    self.attack_cooldown -= 1
-                elif random.random() < 1:  # 2% chance to start attack
-                    self.is_attacking = True
-                    self.attack_type = random.choice(['gradual', 'oscillating', 'sudden'])
-                    self.attack_counts.labels(type=self.attack_type).inc()
-                    logger.warning(f"\n!!! CRITICAL ALERT: {self.attack_type.upper()} ATTACK INITIATED !!!")
+            if not self.is_attacking and random.random() < 0.02:
+                self.is_attacking = True
+                self.attack_type = random.choice(['gradual', 'oscillating', 'sudden'])
+                self.attack_counts.labels(type=self.attack_type).inc()
+                logger.warning(f"\n!!! CRITICAL ALERT: {self.attack_type.upper()} ATTACK INITIATED !!!")
             
-            # Generate and set new values
+            current_values = {}
             for metric_name in self.metrics:
                 if self.is_attacking:
                     value = self.generate_attack_value(metric_name)
                 else:
                     value = self.add_minimal_noise(self.base_params[metric_name])
                 
-                # Update current values and Prometheus metrics
-                current_values[metric_name] = value
                 self.metrics[metric_name].set(value)
-                logger.debug(f"Set {metric_name} to {value:.2f}")
+                current_values[metric_name] = value
             
             # Check for anomalies
             for metric_name, value in current_values.items():
                 status = self.detector.get_status(metric_name, value, current_values)
                 if status['is_anomaly']:
-                    print("ATTACK DETECTED")
                     logger.warning(
                         f"Attack detected in {metric_name}: "
                         f"value={value:.2f}, deviation={status['deviation']:.2f}"
                     )
-                print(status)
+            
+            # Handle attack progression
+            if self.is_attacking:
+                self.attack_progress += 1
+                if self.attack_progress % 60 == 0:
+                    self.is_attacking = False
+                    self.attack_progress = 0
+                    logger.info("\n--- Attack phase ended, systems attempting to stabilize ---")
             
             # Increment update counter
             self.metric_updates.inc()
             
-            # Check for attack phase end
-            if self.is_attacking and self.attack_progress % self.attack_duration == 0:
-                self.is_attacking = False
-                self.attack_cooldown = self.cooldown_period
-                logger.info("\n--- Attack phase ended, systems attempting to stabilize ---")
-                
         except Exception as e:
             logger.error(f"Error updating metrics: {str(e)}", exc_info=True)
+            if not self.is_running:
+                raise
+
+    def metrics_loop(self):
+        """Main metrics update loop"""
+        update_count = 0
+        logger.info("Starting attack simulation loop")
+        
+        while self.is_running:
+            try:
+                self.update_metrics()
+                update_count += 1
+                
+                # Log status every 10 updates
+                if update_count % 10 == 0 and not self.is_attacking:
+                    logger.info(f"Normal operation continues. Updates: {update_count}")
+                
+                time.sleep(1)
+            except Exception as e:
+                logger.error(f"Error in metrics loop: {str(e)}")
+                if self.is_running:  # Only raise if we're not shutting down
+                    raise
+                break
+
+    def start(self):
+        """Start attack simulation"""
+        try:
+            # Start Prometheus HTTP server
+            logger.info("Starting Prometheus metrics server on port 8001...")
+            start_http_server(8001)
+            logger.info("Prometheus metrics server started successfully")
+            
+            # Start metrics update thread
+            self.metrics_thread = threading.Thread(target=self.metrics_loop)
+            self.metrics_thread.start()
+            logger.info("Attack simulation thread started")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start attack simulation: {str(e)}")
+            self.stop()
+            return False
 
 def main():
     try:
-        start_http_server(8001)
-        logger.info("Started Prometheus metrics server on port 8001")
-        
+        # Initialize and start attack simulation
         simulation = ICSAttackSimulation()
-        logger.info("Attack simulation initialized and ready")
+        if not simulation.start():
+            sys.exit(1)
         
-        update_count = 0
-        while True:
-            simulation.update_metrics()
-            update_count += 1
-            
-            if update_count % 10 == 0 and not simulation.is_attacking:
-                logger.info(f"Normal operation continues. Updates: {update_count}")
-            
+        # Keep main thread alive until signal received
+        while simulation.is_running:
             time.sleep(1)
             
     except Exception as e:
         logger.error(f"Fatal error in attack simulation: {str(e)}", exc_info=True)
         raise
+    finally:
+        logger.info("Shutting down attack simulation...")
+
 if __name__ == '__main__':
     main()

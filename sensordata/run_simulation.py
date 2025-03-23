@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox
 import threading
 import socket
 import logging
+import queue
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +20,9 @@ class ICSSimulationGUI:
         self.root = root
         self.root.title("ICS Facility Control")
         self.root.geometry("600x400")
+        
+        # Message queue for thread-safe GUI updates
+        self.message_queue = queue.Queue()
         
         # Style
         style = ttk.Style()
@@ -82,6 +86,21 @@ class ICSSimulationGUI:
         
         # Protocol for window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Start GUI update loop
+        self.update_gui()
+
+    def update_gui(self):
+        """Process messages from queue and update GUI"""
+        try:
+            while True:
+                message, level = self.message_queue.get_nowait()
+                self.log_output(message, level)
+        except queue.Empty:
+            pass
+        finally:
+            # Schedule next update
+            self.root.after(100, self.update_gui)
 
     def log_output(self, message, level="INFO"):
         """Add message to output text widget with timestamp"""
@@ -111,6 +130,15 @@ class ICSSimulationGUI:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             return s.connect_ex(('localhost', port)) == 0
 
+    def wait_for_metrics(self, timeout=10):
+        """Wait for metrics endpoint to become available"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.check_port(8000):
+                return True
+            time.sleep(0.5)
+        return False
+
     def start_facility(self):
         """Start the normal ICS simulation"""
         if self.check_port(8000):
@@ -120,14 +148,37 @@ class ICSSimulationGUI:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
         try:
-            # Start normal metrics simulation
+            self.message_queue.put(("Starting metrics collection...", "INFO"))
+            
+            # Start normal metrics simulation with enhanced error capture
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
             self.normal_sim = subprocess.Popen(
                 [sys.executable, os.path.join(script_dir, 'ics_metrics.py')],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.PIPE,  # Capture stderr separately
                 text=True,
-                bufsize=1
+                bufsize=1,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
+
+            # Check for immediate startup errors
+            time.sleep(2)  # Give process time to start
+            if self.normal_sim.poll() is not None:
+                # Process has already terminated
+                stdout, stderr = self.normal_sim.communicate()
+                error_msg = stderr if stderr else stdout
+                raise Exception(f"Process failed to start: {error_msg}")
+            
+            # Wait for metrics endpoint to be available
+            if not self.wait_for_metrics():
+                stdout, stderr = self.normal_sim.communicate()
+                error_msg = stderr if stderr else stdout
+                raise Exception(f"Metrics endpoint failed to start. Process output: {error_msg}")
             
             self.is_running = True
             self.status_var.set("Facility Status: ONLINE")
@@ -138,11 +189,14 @@ class ICSSimulationGUI:
             # Start output monitoring thread
             threading.Thread(target=self.monitor_output, daemon=True).start()
             
-            self.log_output("Facility started - Systems operational", "INFO")
+            self.message_queue.put(("Facility started - Systems operational", "INFO"))
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start facility: {str(e)}")
             logger.error(f"Startup error: {str(e)}")
+            if self.normal_sim:
+                self.normal_sim.terminate()
+                self.normal_sim = None
 
     def start_attack(self):
         """Start the attack simulation"""
@@ -158,18 +212,25 @@ class ICSSimulationGUI:
         
         try:
             # Start attack simulation
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
             self.attack_sim = subprocess.Popen(
                 [sys.executable, os.path.join(script_dir, 'ics_attack_simulation.py')],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
             )
             
             self.under_attack = True
             self.attack_btn.config(state='disabled')
             self.status_var.set("Facility Status: UNDER ATTACK")
-            self.log_output("CYBER ATTACK STARTED!", "INFO")
+            self.message_queue.put(("CYBER ATTACK STARTED!", "WARNING"))
             
             # Start attack output monitoring thread
             threading.Thread(target=self.monitor_attack_output, daemon=True).start()
@@ -186,11 +247,15 @@ class ICSSimulationGUI:
         # Stop processes
         for process in [self.normal_sim, self.attack_sim]:
             if process and process.poll() is None:
-                if sys.platform == 'win32':
-                    process.send_signal(signal.CTRL_C_EVENT)
+                if os.name == 'nt':
+                    process.send_signal(signal.CTRL_BREAK_EVENT)
                 else:
                     process.terminate()
-                process.wait()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
         
         # Reset GUI
         self.status_var.set("Facility Status: OFFLINE")
@@ -198,7 +263,7 @@ class ICSSimulationGUI:
         self.attack_btn.config(state='disabled')
         self.stop_btn.config(state='disabled')
         
-        self.log_output("Emergency stop initiated - All systems offline", "WARNING")
+        self.message_queue.put(("Emergency stop initiated - All systems offline", "WARNING"))
 
     def monitor_output(self):
         """Monitor and display normal simulation output"""
@@ -206,26 +271,28 @@ class ICSSimulationGUI:
             output = self.normal_sim.stdout.readline()
             if output:
                 if "attack" in output.lower():
-                    self.log_output(output.strip(), "WARNING")
+                    self.message_queue.put((output.strip(), "WARNING"))
                 elif "ERROR" in output.upper():
-                    self.log_output(output.strip(), "ERROR")
+                    self.message_queue.put((output.strip(), "ERROR"))
                 elif "WARNING" in output.upper():
-                    self.log_output(output.strip(), "WARNING")
-                # else:
-                #     self.log_output(output.strip(), "INFO")
+                    self.message_queue.put((output.strip(), "WARNING"))
+                else:
+                    self.message_queue.put((output.strip(), "INFO"))
+
     def monitor_attack_output(self):
         """Monitor and display attack simulation output"""
         while self.under_attack and self.attack_sim and self.attack_sim.poll() is None:
             output = self.attack_sim.stdout.readline()
             if output:
                 if "CRITICAL" in output or "attack" in output.lower():
-                    self.log_output(output.strip(), "WARNING")
+                    self.message_queue.put((output.strip(), "WARNING"))
                 elif "ERROR" in output.upper():
-                    self.log_output(output.strip(), "ERROR")
+                    self.message_queue.put((output.strip(), "ERROR"))
                 elif "ANOMALY" in output:
-                    self.log_output(output.strip(), "WARNING")
-                # else:
-                #     self.log_output(output.strip(), "INFO")
+                    self.message_queue.put((output.strip(), "WARNING"))
+                else:
+                    self.message_queue.put((output.strip(), "INFO"))
+
     def on_closing(self):
         """Handle window closing"""
         if messagebox.askokcancel("Quit", "Do you want to quit?"):

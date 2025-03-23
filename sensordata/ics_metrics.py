@@ -2,6 +2,9 @@
 import time
 import random
 import logging
+import threading
+import signal
+import sys
 from prometheus_client import start_http_server, Gauge, Counter
 from arima_detector import ArimaDetector
 import warnings
@@ -9,7 +12,6 @@ import warnings
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-warnings.filterwarnings("ignore")
 
 class ICSMetrics:
     def __init__(self):
@@ -43,11 +45,33 @@ class ICSMetrics:
         # Update counter
         self.updates = Counter('metric_updates_total', 'Total number of metric updates')
         
+        # Control flags
+        self.is_running = True
+        self.metrics_thread = None
+        
+        # Signal handlers
+        signal.signal(signal.SIGINT, self.handle_signal)
+        signal.signal(signal.SIGTERM, self.handle_signal)
+        if sys.platform == 'win32':
+            signal.signal(signal.SIGBREAK, self.handle_signal)
+        
         logger.info("Base values set: %s", str(self.normal_params))
+
+    def handle_signal(self, signum, frame):
+        """Handle shutdown signals"""
+        logger.info("Shutdown signal received, stopping metrics collection...")
+        self.stop()
+
+    def stop(self):
+        """Stop metrics collection"""
+        self.is_running = False
+        if self.metrics_thread and self.metrics_thread.is_alive():
+            self.metrics_thread.join(timeout=5)
+        logger.info("Metrics collection stopped")
 
     def add_noise(self, value):
         """Add minimal random noise (matching training data)"""
-        noise = random.uniform(-0.01, 0.01)  # 0.1% variation
+        noise = random.uniform(-0.1, 0.1)  # 0.1% variation
         return value + (value * noise)
 
     def update_metrics(self):
@@ -68,7 +92,6 @@ class ICSMetrics:
             # Check for anomalies
             for metric_name, value in current_values.items():
                 status = self.detector.get_status(metric_name, value, current_values)
-                print(status)
                 if status['is_anomaly']:
                     logger.warning(
                         f"Anomaly detected in normal metrics - {metric_name}: "
@@ -80,32 +103,66 @@ class ICSMetrics:
             
         except Exception as e:
             logger.error(f"Error updating metrics: {str(e)}", exc_info=True)
+            if not self.is_running:
+                raise
+
+    def metrics_loop(self):
+        """Main metrics update loop"""
+        update_count = 0
+        logger.info("Starting metrics collection loop")
+        
+        while self.is_running:
+            try:
+                self.update_metrics()
+                update_count += 1
+                
+                # Log status every 10 updates
+                if update_count % 10 == 0:
+                    logger.info(f"Normal operation continues. Updates: {update_count}")
+                
+                time.sleep(1)
+            except Exception as e:
+                logger.error(f"Error in metrics loop: {str(e)}")
+                if self.is_running:  # Only raise if we're not shutting down
+                    raise
+                break
+
+    def start(self):
+        """Start metrics collection"""
+        try:
+            # Start Prometheus HTTP server
+            logger.info("Starting Prometheus metrics server on port 8000...")
+            start_http_server(8000)
+            logger.info("Prometheus metrics server started successfully")
+            
+            # Start metrics update thread
+            self.metrics_thread = threading.Thread(target=self.metrics_loop)
+            self.metrics_thread.start()
+            logger.info("Metrics collection thread started")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start metrics collection: {str(e)}")
+            self.stop()
+            return False
 
 def main():
     try:
-        # Start Prometheus HTTP server on port 8000
-        start_http_server(8000)
-        logger.info("Started Prometheus metrics server on port 8000")
-        
-        # Initialize metrics
+        # Initialize and start metrics collection
         metrics = ICSMetrics()
-        logger.info("ICS Metrics initialized successfully")
+        if not metrics.start():
+            sys.exit(1)
         
-        # Update metrics every second
-        update_count = 0
-        while True:
-            metrics.update_metrics()
-            update_count += 1
-            
-            # Log status every 10 updates
-            if update_count % 10 == 0:
-                logger.info(f"Normal operation continues. Updates: {update_count}")
-            
+        # Keep main thread alive until signal received
+        while metrics.is_running:
             time.sleep(1)
             
     except Exception as e:
         logger.error(f"Fatal error in ICS metrics simulation: {str(e)}", exc_info=True)
         raise
+    finally:
+        logger.info("Shutting down ICS metrics simulation...")
 
 if __name__ == '__main__':
     main()

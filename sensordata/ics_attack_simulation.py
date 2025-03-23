@@ -118,7 +118,7 @@ class ICSAttackSimulation:
             if not self.is_attacking:
                 if self.attack_cooldown > 0:
                     self.attack_cooldown -= 1
-                elif random.random() < 0.02:  # 2% chance to start attack
+                elif random.random() < 1:  # 2% chance to start attack
                     self.is_attacking = True
                     self.attack_type = random.choice(['gradual', 'oscillating', 'sudden'])
                     self.attack_counts.labels(type=self.attack_type).inc()
@@ -140,6 +140,7 @@ class ICSAttackSimulation:
             for metric_name, value in current_values.items():
                 status = self.detector.get_status(metric_name, value, current_values)
                 if status['is_anomaly']:
+                    print("ATTACK DETECTED")
                     logger.warning(
                         f"Attack detected in {metric_name}: "
                         f"value={value:.2f}, deviation={status['deviation']:.2f}"

@@ -169,7 +169,7 @@ class ICSSimulationGUI:
             self.under_attack = True
             self.attack_btn.config(state='disabled')
             self.status_var.set("Facility Status: UNDER ATTACK")
-            self.log_output("CYBER ATTACK STARTED!", "WARNING")
+            self.log_output("CYBER ATTACK STARTED!", "INFO")
             
             # Start attack output monitoring thread
             threading.Thread(target=self.monitor_attack_output, daemon=True).start()
@@ -205,25 +205,27 @@ class ICSSimulationGUI:
         while self.is_running and self.normal_sim and self.normal_sim.poll() is None:
             output = self.normal_sim.stdout.readline()
             if output:
-                if "ANOMALY DETECTED" in output:
+                if "attack" in output.lower():
                     self.log_output(output.strip(), "WARNING")
                 elif "ERROR" in output.upper():
                     self.log_output(output.strip(), "ERROR")
                 elif "WARNING" in output.upper():
                     self.log_output(output.strip(), "WARNING")
-
+                # else:
+                #     self.log_output(output.strip(), "INFO")
     def monitor_attack_output(self):
         """Monitor and display attack simulation output"""
         while self.under_attack and self.attack_sim and self.attack_sim.poll() is None:
             output = self.attack_sim.stdout.readline()
             if output:
-                if "CRITICAL" in output or "ATTACK" in output:
+                if "CRITICAL" in output or "attack" in output.lower():
                     self.log_output(output.strip(), "WARNING")
                 elif "ERROR" in output.upper():
                     self.log_output(output.strip(), "ERROR")
                 elif "ANOMALY" in output:
                     self.log_output(output.strip(), "WARNING")
-
+                # else:
+                #     self.log_output(output.strip(), "INFO")
     def on_closing(self):
         """Handle window closing"""
         if messagebox.askokcancel("Quit", "Do you want to quit?"):

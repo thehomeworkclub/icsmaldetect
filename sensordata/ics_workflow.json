@@ -1,0 +1,56 @@
+{
+  "createTime": 1742684561348,
+  "updateTime": 1742684958761,
+  "name": "ics_malware",
+  "description": "Malware detection and alerting using anomaly detection in ICS's",
+  "version": 1,
+  "tasks": [
+    {
+      "name": "wait_for_anomaly",
+      "taskReferenceName": "wait_for_anomaly",
+      "type": "WAIT_FOR_WEBHOOK",
+      "inputParameters": {
+        "webhookRequestType": "POST",
+        "webhookResponseTimeout": "300"
+      }
+    },
+    {
+      "name": "process_anomaly",
+      "taskReferenceName": "process_anomaly",
+      "type": "HTTP",
+      "inputParameters": {
+        "http_request": {
+          "uri": "${workflow.input.callback_url}",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "status": "ALERT",
+            "metric": "${wait_for_anomaly.output.body.metric}",
+            "anomaly_score": "${wait_for_anomaly.output.body.anomaly_score}",
+            "timestamp": "${wait_for_anomaly.output.body.timestamp}"
+          }
+        }
+      }
+    }
+  ],
+  "inputParameters": [
+    "callback_url"
+  ],
+  "outputParameters": {
+    "anomaly_details": "${wait_for_anomaly.output.body}",
+    "process_result": "${process_anomaly.output}"
+  },
+  "failureWorkflow": "",
+  "schemaVersion": 2,
+  "restartable": true,
+  "workflowStatusListenerEnabled": false,
+  "ownerEmail": "sebastianralexis@gmail.com",
+  "timeoutPolicy": "ALERT_ONLY",
+  "timeoutSeconds": 0,
+  "variables": {},
+  "inputTemplate": {},
+  "enforceSchema": true
+}

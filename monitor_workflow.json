@@ -1,0 +1,79 @@
+{
+  "createTime": 1742689237746,
+  "name": "Monitor-HTTP-Endpoint-Availability",
+  "description": "Monitor HTTP endpoint availability and send notifications",
+  "version": 2,
+  "tasks": [
+    {
+      "name": "call_endpoint",
+      "taskReferenceName": "call_endpoint",
+      "inputParameters": {
+        "http_request": {
+          "uri": "${workflow.input.endpoint_url}",
+          "method": "GET",
+          "connectionTimeOut": 3000,
+          "readTimeOut": 3000
+        }
+      },
+      "type": "HTTP",
+      "optional": false,
+      "startDelay": 0
+    },
+    {
+      "name": "get_timestamp",
+      "taskReferenceName": "get_timestamp_ref",
+      "inputParameters": {
+        "expression": "new Date().toISOString()",
+        "evaluatorType": "javascript"
+      },
+      "type": "INLINE",
+      "optional": false,
+      "startDelay": 0
+    },
+    {
+      "name": "notify_if_failed",
+      "taskReferenceName": "notify_if_failed",
+      "inputParameters": {
+        "switchCaseValue": "${call_endpoint.output.response.statusCode}",
+        "notification_message": "HTTP Endpoint ${workflow.input.endpoint_url} is down. Status: ${call_endpoint.output.response.statusCode}. Time: ${get_timestamp_ref.output.result}"
+      },
+      "type": "SWITCH",
+      "decisionCases": {
+        "200": [],
+        "default": [
+          {
+            "name": "send_notification",
+            "taskReferenceName": "send_notification",
+            "inputParameters": {
+              "http_request": {
+                "uri": "${workflow.input.notification_webhook_url}",
+                "method": "POST",
+                "body": {
+                  "message": "${notify_if_failed.inputParameters.notification_message}",
+                  "endpoint": "${workflow.input.endpoint_url}",
+                  "status": "${call_endpoint.output.response.statusCode}",
+                  "timestamp": "${get_timestamp_ref.output.result}"
+                }
+              }
+            },
+            "type": "HTTP",
+            "optional": false
+          }
+        ]
+      },
+      "defaultCase": [],
+      "evaluatorType": "value-param"
+    }
+  ],
+  "inputParameters": [
+    "endpoint_url",
+    "notification_webhook_url"
+  ],
+  "outputParameters": {
+    "status": "${call_endpoint.output.response.statusCode}",
+    "notified": "${notify_if_failed.output.caseOutput}"
+  },
+  "schemaVersion": 2,
+  "restartable": true,
+  "ownerEmail": "sebastianralexis@gmail.com"
+}

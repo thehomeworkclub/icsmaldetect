@@ -1,0 +1,49 @@
+{
+  "name": "webhook_echo_workflow",
+  "description": "Workflow that responds to webhook triggers with an echo response",
+  "version": 1,
+  "tasks": [
+    {
+      "name": "wait_for_trigger",
+      "taskReferenceName": "wait_for_trigger",
+      "type": "WAIT_FOR_WEBHOOK",
+      "inputParameters": {
+        "webhookRequestType": "POST",
+        "webhookResponseTimeout": "300"
+      }
+    },
+    {
+      "name": "process_and_respond",
+      "taskReferenceName": "process_and_respond",
+      "type": "HTTP",
+      "inputParameters": {
+        "http_request": {
+          "uri": "${workflow.input.callback_url}",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "status": "PROCESSED",
+            "originalData": "${wait_for_trigger.output.body}",
+            "processedTimestamp": "${system.currentTimeMillis}",
+            "message": "Echo response from Orkes Conductor workflow"
+          }
+        }
+      }
+    }
+  ],
+  "inputParameters": [
+    "callback_url"
+  ],
+  "outputParameters": {
+    "triggerData": "${wait_for_trigger.output.body}",
+    "responseData": "${process_and_respond.output}"
+  },
+  "restartable": true,
+  "workflowStatusListenerEnabled": false,
+  "schemaVersion": 2,
+  "timeoutPolicy": "ALERT_ONLY",
+  "timeoutSeconds": 600,
+  "ownerEmail": "sebastianralexis@gmail.com"
+}

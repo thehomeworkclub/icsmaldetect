@@ -3,10 +3,14 @@ import time
 import random
 import math
 from prometheus_client import start_http_server, Gauge
+from arima_detector import ArimaDetector
 
 class ICSAttackSimulation:
     def __init__(self):
-        # Centrifuge metrics with attack patterns
+        # Initialize ARIMA detector
+        self.detector = ArimaDetector()
+        
+        # Metrics under attack
         self.rotation_speed = Gauge('centrifuge_rotation_speed_attacked', 'Centrifuge rotation speed in RPM (with attacks)')
         self.vibration = Gauge('centrifuge_vibration_attacked', 'Vibration amplitude in mm/s (with attacks)')
         self.temperature = Gauge('centrifuge_temperature_attacked', 'Temperature in Celsius (with attacks)')
@@ -15,109 +19,123 @@ class ICSAttackSimulation:
         self.voltage = Gauge('power_voltage_attacked', 'Operating voltage in V (with attacks)')
         self.current = Gauge('power_current_attacked', 'Operating current in A (with attacks)')
         
-        # Normal operating parameters
-        self.normal_params = {
-            'rotation_speed': 50000,  # RPM
-            'vibration': 2.0,         # mm/s
-            'temperature': 75.0,      # °C
-            'pressure': 550.0,        # Pa
-            'flow_rate': 70.0,        # g/min
-            'voltage': 380.0,         # V
-            'current': 10.0           # A
+        # Initial parameters
+        self.base_params = {
+            'rotation_speed': 60000,  # RPM
+            'vibration': 1.0,         # mm/s
+            'temperature': 310.6,      # °K
+            'pressure': 120.0,        # Kpa
+            'flow_rate': 65,          # m^2/hr
+            'voltage': 480,           # V
+            'current': 1200           # A
+        }
+        
+        # Copy base params to current params
+        self.current_params = self.base_params.copy()
+        
+        # Catastrophic attack ranges
+        self.attack_params = {
+            'rotation_speed': {'max': 150000, 'min': 5000},    # Extreme speed variations
+            'vibration': {'max': 50.0, 'min': 0.01},           # Dangerous vibrations
+            'temperature': {'max': 800.0, 'min': 100.0},       # Critical temperature
+            'pressure': {'max': 500.0, 'min': 5.0},            # Dangerous pressure
+            'flow_rate': {'max': 200.0, 'min': 1.0},          # Critical flow disruption
+            'voltage': {'max': 1000.0, 'min': 100.0},         # Severe power issues
+            'current': {'max': 3000.0, 'min': 100.0}          # Dangerous current
         }
         
         # Attack state
-        self.attack_active = False
         self.attack_type = None
-        self.attack_duration = 0
         self.attack_progress = 0
+        self.attack_duration = 60     # Longer duration for each attack
+        self.is_attacking = False
+        self.attack_cooldown = 0
+        self.cooldown_period = 120    # 2 minutes between attacks
 
-    def add_noise(self, value, noise_factor):
-        """Add random noise to a value"""
-        noise = random.uniform(-noise_factor, noise_factor)
+    def add_minimal_noise(self, value):
+        """Add very minimal noise when not attacking"""
+        noise = random.uniform(-0.00001, 0.00001)  # 0.001% variation
         return value + (value * noise)
 
-    def simulate_stuxnet_attack(self):
-        """Simulate different types of Stuxnet-like attacks"""
-        if not self.attack_active:
-            # 5% chance to start an attack
-            if random.random() < 0.05:
-                self.attack_active = True
-                self.attack_type = random.choice([
-                    'overspeed',      # Dangerous speed increase
-                    'underspeed',     # Subtle speed decrease
-                    'oscillation'     # Speed oscillation
+    def generate_attack_value(self, metric_name):
+        """Generate catastrophic attack values"""
+        base_value = self.base_params[metric_name]
+        attack_range = self.attack_params[metric_name]
+        progress_factor = (self.attack_progress % self.attack_duration) / self.attack_duration
+        
+        if self.attack_type == 'meltdown':
+            # Exponential increase to dangerous levels
+            max_change = attack_range['max'] - base_value
+            change = max_change * (progress_factor ** 3)  # Faster progression
+            new_value = base_value + change
+            
+        elif self.attack_type == 'catastrophic':
+            # Wild oscillations between extremes
+            amplitude = attack_range['max'] - attack_range['min']
+            frequency = 2.0  # Very fast oscillations
+            new_value = ((attack_range['max'] + attack_range['min']) / 2 + 
+                        amplitude * math.sin(progress_factor * 2 * math.pi * frequency))
+            
+        else:  # cascade
+            # Cascading system failure
+            severity = min(1.0, (self.attack_progress / 20))  # Quick escalation
+            if random.random() < severity:
+                new_value = random.choice([
+                    attack_range['min'] * 0.5,  # Complete failure
+                    attack_range['max'] * 1.5   # Catastrophic overload
                 ])
-                self.attack_duration = random.randint(10, 30)  # Attack lasts 10-30 seconds
-                self.attack_progress = 0
-                print(f"Starting {self.attack_type} attack for {self.attack_duration} seconds")
-
-        if self.attack_active:
-            self.attack_progress += 1
-            if self.attack_progress >= self.attack_duration:
-                self.attack_active = False
-                self.attack_type = None
-                print("Attack completed")
-
-    def get_attack_values(self):
-        """Calculate sensor values based on current attack state"""
-        if not self.attack_active:
-            return {k: self.add_noise(v, 0.01) for k, v in self.normal_params.items()}
-
-        values = self.normal_params.copy()
-        progress_factor = self.attack_progress / self.attack_duration
-
-        if self.attack_type == 'overspeed':
-            # Gradually increase speed to 63,000 RPM
-            speed_increase = 13000 * progress_factor
-            values['rotation_speed'] += speed_increase
-            values['vibration'] += speed_increase / 1000  # Increased vibration
-            values['temperature'] += speed_increase / 500  # Temperature rise
-            values['current'] += speed_increase / 5000  # Higher power consumption
-
-        elif self.attack_type == 'underspeed':
-            # Subtly decrease speed by up to 10%
-            speed_decrease = 5000 * progress_factor
-            values['rotation_speed'] -= speed_decrease
-            values['flow_rate'] -= speed_decrease / 10000
-            values['pressure'] -= speed_decrease / 100
-
-        elif self.attack_type == 'oscillation':
-            # Create oscillating speed pattern
-            oscillation = 2000 * math.sin(self.attack_progress * 0.5)
-            values['rotation_speed'] += oscillation
-            values['vibration'] += abs(oscillation / 1000)
-            values['pressure'] += oscillation / 100
-
-        return values
+            else:
+                new_value = base_value * random.uniform(3.0, 5.0)  # Severe deviation
+        
+        return new_value
 
     def update_metrics(self):
-        """Update all metrics with new values"""
-        self.simulate_stuxnet_attack()
-        values = self.get_attack_values()
+        """Update metrics with attack patterns"""
+        self.attack_progress += 1
         
-        # Set new values
-        self.rotation_speed.set(values['rotation_speed'])
-        self.vibration.set(values['vibration'])
-        self.temperature.set(values['temperature'])
-        self.pressure.set(values['pressure'])
-        self.flow_rate.set(values['flow_rate'])
-        self.voltage.set(values['voltage'])
-        self.current.set(values['current'])
+        # Handle attack state changes
+        if not self.is_attacking:
+            if self.attack_cooldown > 0:
+                self.attack_cooldown -= 1
+            elif random.random() < 0.02:  # 2% chance to start attack
+                self.is_attacking = True
+                self.attack_type = random.choice(['meltdown', 'catastrophic', 'cascade'])
+                print(f"\n!!! CRITICAL ALERT: {self.attack_type.upper()} ATTACK INITIATED !!!")
+        
+        # Generate and set new values
+        for metric_name in self.current_params:
+            if self.is_attacking:
+                value = self.generate_attack_value(metric_name)
+            else:
+                value = self.add_minimal_noise(self.base_params[metric_name])
+            
+            # Calculate deviation
+            base_value = self.base_params[metric_name]
+            deviation_pct = ((value - base_value) / base_value) * 100
+            
+            # Update values
+            self.current_params[metric_name] = value
+            getattr(self, metric_name).set(value)
+            
+            # Report significant attacks
+            if abs(deviation_pct) > 50:  # Only report major deviations
+                print(f"CRITICAL: {metric_name} at {value:.2f} (deviation: {deviation_pct:+.1f}%)")
+        
+        # Check for attack phase end
+        if self.is_attacking and self.attack_progress % self.attack_duration == 0:
+            self.is_attacking = False
+            self.attack_cooldown = self.cooldown_period
+            print("\n--- Attack phase ended, systems attempting to stabilize ---")
 
 def main():
     try:
-        # Start Prometheus HTTP server on port 8001 (different from normal metrics)
         start_http_server(8001)
-        print("Prometheus metrics server (attack simulation) started on port 8001")
+        simulation = ICSAttackSimulation()
+        print("\nAttack simulation ready. Waiting to initiate...")
+        print("Normal values:", simulation.base_params)
         
-        # Initialize metrics
-        metrics = ICSAttackSimulation()
-        print("Attack simulation metrics initialized successfully")
-        
-        # Update metrics every second
         while True:
-            metrics.update_metrics()
+            simulation.update_metrics()
             time.sleep(1)
     except Exception as e:
         print(f"Error in attack simulation: {str(e)}")

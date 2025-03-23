@@ -5,9 +5,12 @@ import math
 import logging
 from prometheus_client import start_http_server, Gauge, Counter
 from arima_detector import ArimaDetector
+import warnings
+from ics_metrics import ICSMetrics
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
+warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 class ICSAttackSimulation:
@@ -141,6 +144,7 @@ class ICSAttackSimulation:
                         f"Attack detected in {metric_name}: "
                         f"value={value:.2f}, deviation={status['deviation']:.2f}"
                     )
+                print(status)
             
             # Increment update counter
             self.metric_updates.inc()
@@ -175,6 +179,5 @@ def main():
     except Exception as e:
         logger.error(f"Fatal error in attack simulation: {str(e)}", exc_info=True)
         raise
-
 if __name__ == '__main__':
     main()

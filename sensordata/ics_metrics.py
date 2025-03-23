@@ -4,10 +4,12 @@ import random
 import logging
 from prometheus_client import start_http_server, Gauge, Counter
 from arima_detector import ArimaDetector
+import warnings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
 
 class ICSMetrics:
     def __init__(self):
@@ -45,7 +47,7 @@ class ICSMetrics:
 
     def add_noise(self, value):
         """Add minimal random noise (matching training data)"""
-        noise = random.uniform(-0.1, 0.1)  # 0.1% variation
+        noise = random.uniform(-0.01, 0.01)  # 0.1% variation
         return value + (value * noise)
 
     def update_metrics(self):
@@ -66,6 +68,7 @@ class ICSMetrics:
             # Check for anomalies
             for metric_name, value in current_values.items():
                 status = self.detector.get_status(metric_name, value, current_values)
+                print(status)
                 if status['is_anomaly']:
                     logger.warning(
                         f"Anomaly detected in normal metrics - {metric_name}: "

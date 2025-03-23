@@ -105,7 +105,7 @@ class ArimaDetector:
         self._add_point(metric_name, value)
         detector = self._get_detector(metric_name)
         
-        if len(detector['points']) < 3:
+        if len(detector['points']) < 20:
             return {'is_anomaly': False, 'deviation': None}
         
         try:

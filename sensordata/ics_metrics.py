@@ -12,6 +12,7 @@ import warnings
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
 
 class ICSMetrics:
     def __init__(self):

@@ -8,10 +8,12 @@ import signal
 import sys
 from prometheus_client import start_http_server, Gauge, Counter
 from arima_detector import ArimaDetector
+import warnings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
 
 class ICSAttackSimulation:
     def __init__(self):

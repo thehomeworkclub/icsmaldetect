@@ -276,22 +276,18 @@ class ICSSimulationGUI:
                     self.message_queue.put((output.strip(), "ERROR"))
                 elif "WARNING" in output.upper():
                     self.message_queue.put((output.strip(), "WARNING"))
-                else:
-                    self.message_queue.put((output.strip(), "INFO"))
-
+                    
     def monitor_attack_output(self):
         """Monitor and display attack simulation output"""
         while self.under_attack and self.attack_sim and self.attack_sim.poll() is None:
             output = self.attack_sim.stdout.readline()
             if output:
-                if "CRITICAL" in output or "attack" in output.lower():
+                if "attack" in output.lower():
                     self.message_queue.put((output.strip(), "WARNING"))
                 elif "ERROR" in output.upper():
                     self.message_queue.put((output.strip(), "ERROR"))
                 elif "ANOMALY" in output:
                     self.message_queue.put((output.strip(), "WARNING"))
-                else:
-                    self.message_queue.put((output.strip(), "INFO"))
 
     def on_closing(self):
         """Handle window closing"""
